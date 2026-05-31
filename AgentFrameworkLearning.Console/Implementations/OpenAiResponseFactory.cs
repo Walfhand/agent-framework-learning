@@ -1,17 +1,20 @@
 using AgentFrameworkLearning.Console.Abstractions;
 using AgentFrameworkLearning.Console.Abstractions.Models;
+using AgentFrameworkLearning.Console.HostedToolResolvers;
+using AgentFrameworkLearning.Console.HostedToolResolvers.Abstractions;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
 
 namespace AgentFrameworkLearning.Console.Implementations;
 #pragma warning disable OPENAI001
-public class OpenAiResponseFactory : IAgentFactory
+public class OpenAiResponseFactory(IEnumerable<IProviderHostedToolResolver> toolResolvers) : IAgentFactory
 {
     public Provider Provider => Provider.OpenAiResponse;
-    private readonly HostedTool[] _hostedTools = [HostedTool.CodeInterpreter, HostedTool.FileSearch, HostedTool.ToolApproval, HostedTool.WebSearch];
+    private readonly IProviderHostedToolResolver[] _toolResolvers =
+        toolResolvers.Where(tr => tr.Provider == Provider.OpenAiResponse).ToArray();
+
     public AIAgent Create(AgentSpec spec)
     {
         var client = new OpenAIClient("");
@@ -20,25 +23,43 @@ public class OpenAiResponseFactory : IAgentFactory
             model: spec.Model,
             instructions: spec.Instructions,
             name: spec.Name,
-            tools: ResolveHostedTools(spec.HostedTools.ToArray()).ToArray());
+            tools: ResolveTools(spec).ToArray());
     }
 
-    private IEnumerable<AITool> ResolveHostedTools(HostedTool[] desiredHostedTools)
+    private IEnumerable<AITool> ResolveTools(AgentSpec spec)
     {
-        var notSupportedTools =
-            desiredHostedTools.Where(dht => !_hostedTools.Contains(dht)).ToList();
-        if (notSupportedTools.Count != 0)
-            throw new Exception($"{string.Join(',', notSupportedTools)} Not supported for the provider : {Provider}");
-        foreach (var desiredHostedTool in desiredHostedTools)
+        var context = new ToolResolutionContext(spec.LocalTools);
+
+        foreach (var desiredHostedTool in spec.HostedTools)
         {
-            switch (desiredHostedTool)
+            var resolver = _toolResolvers.SingleOrDefault(tr => tr.CanResolve(desiredHostedTool));
+            if (resolver is null)
             {
-                case HostedTool.CodeInterpreter:
-                    yield return FoundryAITool.CreateCodeInterpreterTool(
-                        new CodeInterpreterToolContainer(
-                            CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
-                    break;
+                throw new Exception($"{desiredHostedTool.Tool} Not supported for the provider : {Provider}");
+            }
+
+            foreach (var tool in resolver.Resolve(desiredHostedTool, context))
+            {
+                yield return tool;
             }
         }
+
+        foreach (var localTool in spec.LocalTools)
+        {
+            if (context.IsLocalToolResolved(localTool))
+            {
+                continue;
+            }
+
+            foreach (var tool in ResolveLocalTool(localTool))
+            {
+                yield return tool;
+            }
+        }
+    }
+
+    private static IEnumerable<AITool> ResolveLocalTool(AIFunction localTool)
+    {
+        yield return localTool;
     }
 }

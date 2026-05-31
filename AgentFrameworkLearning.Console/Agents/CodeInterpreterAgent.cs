@@ -3,13 +3,13 @@ using AgentFrameworkLearning.Console.Abstractions;
 using AgentFrameworkLearning.Console.Abstractions.Models;
 using Microsoft.Agents.AI;
 
-namespace AgentFrameworkLearning.Console;
+namespace AgentFrameworkLearning.Console.Agents;
 
 public sealed class CodeInterpreterAgent(IAgentBuilder agentFactory)
 {
     private readonly AIAgent _agent = agentFactory.Build(new AgentSpec(Provider.OpenAiResponse, "gpt-4o-mini",
-        "CodeInterpreter",
-        "You are a helpful assistant that can write and execute Python code.", [HostedTool.CodeInterpreter]));
+        "CodeInterpreter", "You are a helpful assistant that can write and execute Python code.",
+        [new CodeInterpreterToolSpec()], []));
 
     public async IAsyncEnumerable<string> RunStreamingAsync(
         string prompt,
